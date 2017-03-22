@@ -2,8 +2,8 @@
 
 namespace Draw\DrawBundle\Test;
 
+use PHPUnit\Framework\TestCase;
 use Symfony\Bundle\FrameworkBundle\Client;
-use PHPUnit_Framework_TestCase;
 
 class RequestHelper
 {
@@ -24,6 +24,8 @@ class RequestHelper
 
     public $maximumSqlQuery;
 
+    public $queryFilters = [];
+
     public $assertions = [
         "statusCode" => null,
         "responseContentType" => null,
@@ -39,7 +41,7 @@ class RequestHelper
 
     public $servers = [];
 
-    public function __construct(PHPUnit_Framework_TestCase $testCase, Client $client)
+    public function __construct(TestCase $testCase, Client $client)
     {
         $this->client = $client;
         $this->testCase = $testCase;
@@ -51,11 +53,11 @@ class RequestHelper
     }
 
     /**
-     * @param PHPUnit_Framework_TestCase $testCase
+     * @param TestCase $testCase
      * @param Client $client
      * @return static
      */
-    public static function factory(PHPUnit_Framework_TestCase $testCase, Client $client)
+    public static function factory(TestCase $testCase, Client $client)
     {
         return new static($testCase, $client);
     }
@@ -314,7 +316,7 @@ class RequestHelper
     /**
      * @param $amount
      */
-    public function maximumSqlQuery($amount)
+    public function maximumSqlQuery($amount, array $filters = [])
     {
         if(!$this->maximumSqlQuery) {
             $this->addPreRequestCallback(function() {
@@ -323,13 +325,22 @@ class RequestHelper
             });
         }
 
+        $this->queryFilters = $filters;
         $this->maximumSqlQuery = $amount;
         $this->asserting(function() {
             $queries = $this->client->getProfile()->getCollector('db')->getQueries()['default'];
+
             //We remove the query "COMMIT" and "START TRANSACTION"
             $queries = array_filter($queries, function($query) {
-               return !is_null($query['types']);
+                return !is_null($query['types']);
             });
+
+            //we apply extra custom filters.
+            if (!empty($this->queryFilters)) {
+                foreach ($this->queryFilters as $filter) {
+                    $queries = array_filter($queries, $filter);
+                }
+            }
 
             $this->testCase->assertLessThanOrEqual($this->maximumSqlQuery, count($queries), json_encode($queries, JSON_PRETTY_PRINT));
         });
