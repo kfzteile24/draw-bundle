@@ -34,6 +34,7 @@ class DrawDrawExtension extends Extension
 
         $container->getDefinition('draw.serializer.self_link')
             ->addMethodCall('setAddClass', [$config['serialization_add_class']]);
+
     }
 
     public function getAlias()

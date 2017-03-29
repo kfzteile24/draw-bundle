@@ -3,7 +3,7 @@ services:
         class: Draw\DrawBundle\EventListener\ApiExceptionSubscriber
         arguments:
             - '%kernel.debug%'
-            - '%fos_rest.exception.codes%'
+            - '@fos_rest.exception.codes_map'
         calls:
             - [setContainer, ['@service_container']]
         tags:

@@ -5,17 +5,73 @@ namespace Draw\DrawBundle\Request;
 use Draw\DrawBundle\PropertyAccess\DynamicArrayObject;
 use Draw\DrawBundle\Request\Exception\RequestValidationException;
 use Draw\DrawBundle\Serializer\GroupHierarchy;
-use JMS\Serializer\DeserializationContext;
+use FOS\RestBundle\Context\Context;
+use FOS\RestBundle\Request\RequestBodyParamConverter as BaseRequestBodyParamConverter;
+use FOS\RestBundle\Serializer\Serializer;
+use JMS\Serializer\Exception\Exception as JMSSerializerException;
+use JMS\Serializer\Exception\UnsupportedFormatException;
 use Sensio\Bundle\FrameworkExtraBundle\Configuration\ParamConverter;
 use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpKernel\Exception\BadRequestHttpException;
+use Symfony\Component\HttpKernel\Exception\UnsupportedMediaTypeHttpException;
+use Symfony\Component\OptionsResolver\OptionsResolver;
 use Symfony\Component\PropertyAccess\PropertyAccess;
+use Symfony\Component\Serializer\Exception\ExceptionInterface as SymfonySerializerException;
+use Symfony\Component\Validator\Validator\ValidatorInterface;
 
-class RequestBodyParamConverter extends \FOS\RestBundle\Request\RequestBodyParamConverter
+
+class RequestBodyParamConverter extends BaseRequestBodyParamConverter
 {
     /**
      * @var GroupHierarchy
      */
     private $groupHierarchy;
+
+    private $serializer;
+    private $context = [];
+    private $validator;
+
+    /**
+     * The name of the argument on which the ConstraintViolationList will be set.
+     *
+     * @var null|string
+     */
+    private $validationErrorsArgument;
+
+    /**
+     * @param Serializer $serializer
+     * @param array|null $groups An array of groups to be used in the serialization context
+     * @param string|null $version A version string to be used in the serialization context
+     * @param ValidatorInterface $validator
+     * @param string|null $validationErrorsArgument
+     *
+     * @throws \InvalidArgumentException
+     */
+    public function __construct(
+        Serializer $serializer,
+        $groups = null,
+        $version = null,
+        ValidatorInterface $validator = null,
+        $validationErrorsArgument = null
+    ) {
+        $this->serializer = $serializer;
+
+        if (!empty($groups)) {
+            $this->context['groups'] = (array)$groups;
+        }
+
+        if (!empty($version)) {
+            $this->context['version'] = $version;
+        }
+
+        if (null !== $validator && null === $validationErrorsArgument) {
+            throw new \InvalidArgumentException('"$validationErrorsArgument" cannot be null when using the validator');
+        }
+
+        $this->validator = $validator;
+        $this->validationErrorsArgument = $validationErrorsArgument;
+    }
+
 
     public function setGroupHierarchy(GroupHierarchy $groupHierarchy)
     {
@@ -45,7 +101,45 @@ class RequestBodyParamConverter extends \FOS\RestBundle\Request\RequestBodyParam
             $property->setValue($request, json_encode($content->getArrayCopy()));
         }
 
-        $result = $this->execute($request, $configuration);
+
+
+        $options = (array)$configuration->getOptions();
+
+        if (isset($options['deserializationContext']) && is_array($options['deserializationContext'])) {
+            $arrayContext = array_merge($this->context, $options['deserializationContext']);
+        } else {
+            $arrayContext = $this->context;
+        }
+        $this->configureContext($context = new Context(), $arrayContext);
+
+        try {
+            $object = $this->serializer->deserialize(
+                $request->getContent(),
+                $configuration->getClass(),
+                $request->getContentType(),
+                $context
+            );
+        } catch (UnsupportedFormatException $e) {
+            return $this->throwException(new UnsupportedMediaTypeHttpException($e->getMessage(), $e), $configuration);
+        } catch (JMSSerializerException $e) {
+            return $this->throwException(new BadRequestHttpException($e->getMessage(), $e), $configuration);
+        } catch (SymfonySerializerException $e) {
+            return $this->throwException(new BadRequestHttpException($e->getMessage(), $e), $configuration);
+        }
+
+        $request->attributes->set($configuration->getName(), $object);
+
+        if (null !== $this->validator) {
+            $validatorOptions = $this->getValidatorOptions($options);
+
+            $errors = $this->validator->validate($object, null, $validatorOptions['groups']);
+
+            $request->attributes->set(
+                $this->validationErrorsArgument,
+                $errors
+            );
+        }
+
 
         if ($this->validationErrorsArgument && $request->attributes->has($this->validationErrorsArgument)) {
             if (count($errors = $request->attributes->get($this->validationErrorsArgument))) {
@@ -53,7 +147,26 @@ class RequestBodyParamConverter extends \FOS\RestBundle\Request\RequestBodyParam
             }
         }
 
-        return $result;
+        return true;
+    }
+
+    public function configureContext(Context $context, array $options)
+    {
+        if (!isset($options['groups'])) {
+            $options['groups'] = ['Default'];
+        }
+
+        $options['groups'] = $this->groupHierarchy->getReachableGroups($options['groups']);
+
+        parent::configureContext($context, $options);
+
+        if (isset($options['attributes'])) {
+            foreach ($options['attributes'] as $attribute => $value) {
+                $context->setAttribute($attribute, $value);
+            }
+        }
+
+        return $context;
     }
 
     protected function convertValidationErrorsToException($errors)
@@ -62,23 +175,33 @@ class RequestBodyParamConverter extends \FOS\RestBundle\Request\RequestBodyParam
         $exception->setViolationList($errors);
         throw $exception;
     }
-
-    public function configureDeserializationContext(DeserializationContext $context, array $options)
+    /**
+     * Throws an exception or return false if a ParamConverter is optional.
+     */
+    private function throwException(\Exception $exception, ParamConverter $configuration)
     {
-        if (!isset($options['groups'])) {
-            $options['groups'] = ['Default'];
+        if ($configuration->isOptional()) {
+            return false;
         }
 
-        $options['groups'] = $this->groupHierarchy->getReachableGroups($options['groups']);
-
-        $context = parent::configureDeserializationContext($context, $options);
-
-        if(isset($options['attributes'])) {
-            foreach($options['attributes'] as $attribute => $value) {
-                $context->setAttribute($attribute, $value);
-            }
-        }
-
-        return $context;
+        throw $exception;
     }
+
+    /**
+     * @param array $options
+     *
+     * @return array
+     */
+    private function getValidatorOptions(array $options)
+    {
+        $resolver = new OptionsResolver();
+        $resolver->setDefaults([
+            'groups' => null,
+            'traverse' => false,
+            'deep' => false,
+        ]);
+
+        return $resolver->resolve(isset($options['validator']) ? $options['validator'] : []);
+    }
+
 }

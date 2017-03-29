@@ -3,6 +3,7 @@
 namespace Draw\DrawBundle\EventListener;
 
 use Draw\DrawBundle\Validator\Exception\ConstraintViolationListException;
+use FOS\RestBundle\Util\ExceptionValueMap;
 use Symfony\Component\DependencyInjection\ContainerAwareInterface;
 use Symfony\Component\DependencyInjection\ContainerAwareTrait;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
@@ -17,17 +18,19 @@ class ApiExceptionSubscriber implements EventSubscriberInterface, ContainerAware
 
     private $debug;
 
+    /**
+     * @var ExceptionValueMap
+     */
     private $exceptionCodes;
 
-    const DEFAULT_STATUS_CODE           = 500;
+    const DEFAULT_STATUS_CODE = 500;
 
     public function __construct(
         $debug,
-        $exceptionCodes
+        ExceptionValueMap $exceptionCodes
     ) {
         $this->debug = $debug;
         $this->exceptionCodes = $exceptionCodes;
-        $this->exceptionCodes[ConstraintViolationListException::class] = 400;
     }
 
     /**
@@ -46,7 +49,8 @@ class ApiExceptionSubscriber implements EventSubscriberInterface, ContainerAware
      */
     protected function getStatusCode($exception)
     {
-        return $this->isSubclassOf($exception, $this->exceptionCodes) ?: self::DEFAULT_STATUS_CODE;
+        $statusCode = $this->exceptionCodes->resolveException($exception);
+        return ($statusCode !== false) ? $statusCode : self::DEFAULT_STATUS_CODE;
     }
 
     /**
