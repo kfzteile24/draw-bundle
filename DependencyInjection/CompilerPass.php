@@ -28,20 +28,9 @@ class CompilerPass implements CompilerPassInterface
                 ->setClass(DoctrineObjectConstructor::class);
         }
 
-        if ($container->hasDefinition('fos_rest.converter.request_body')) {
-            $container->getDefinition('fos_rest.converter.request_body')
-                ->setClass(RequestBodyParamConverter::class);
-        }
-
         if ($container->hasDefinition('fos_rest.view_response_listener')) {
             $definition = $container->getDefinition('fos_rest.view_response_listener')
                 ->setClass(ViewResponseListener::class);
         }
-
-        $requestBodyConverter = $container->getDefinition("fos_rest.converter.request_body");
-        $requestBodyConverter->addMethodCall(
-            "setGroupHierarchy",
-            [new Reference("draw.serializer.group_hierarchy")]
-        );
     }
 }
