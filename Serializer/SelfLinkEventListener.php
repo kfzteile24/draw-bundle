@@ -44,6 +44,11 @@ class SelfLinkEventListener
 
     public function onPostSerialize(ObjectEvent $objectEvent)
     {
+        if ($this->container->hasParameter('self_link_listener_active')
+            && $this->container->getParameter('self_link_listener_active') === false) {
+            return;
+        }
+
         $visitor = $objectEvent->getVisitor();
         $object = $objectEvent->getObject();
         $router = $this->container->get("router");

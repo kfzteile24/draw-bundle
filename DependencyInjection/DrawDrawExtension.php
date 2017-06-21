@@ -32,6 +32,8 @@ class DrawDrawExtension extends Extension
             $loader->load('doctrine_repository_factory.yml');
         }
 
+        $container->setParameter('self_link_listener_active', $config['self_link_listener_active']);
+
         $container->getDefinition('draw.serializer.self_link')
             ->addMethodCall('setAddClass', [$config['serialization_add_class']]);
 
